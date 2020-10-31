@@ -8,6 +8,12 @@ from vqa.function.test import test_net
 
 
 def parse_args():
+
+    """
+    Working Directory: ~/Pictures/CSC2547/VLBERT
+    "--cfg ./cfgs/vqa/base_4x16G_fp32.yaml --ckpt ./model/pretrained_model/vl-bert-base-e2e.model
+    --bs 1 --gpus 1 --model-dir ./model/pretrained_model --result-path ./result --result-name result.txt"
+    """
     parser = argparse.ArgumentParser('Get Test Result of VQA Network')
     parser.add_argument('--cfg', type=str, help='path to answer net config yaml')
     parser.add_argument('--ckpt', type=str, help='path to checkpoint of answer net')

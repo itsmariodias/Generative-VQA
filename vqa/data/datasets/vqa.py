@@ -23,6 +23,7 @@ from pycocotools.coco import COCO
 csv.field_size_limit(sys.maxsize)
 FIELDNAMES = ['image_id', 'image_w', 'image_h', 'num_boxes', 'boxes', 'features']
 
+from collections import Counter
 
 class VQA(Dataset):
     def __init__(self, image_set, root_path, data_path, answer_vocab_file, use_imdb=True,
@@ -31,7 +32,7 @@ class VQA(Dataset):
                  zip_mode=False, cache_mode=False, cache_db=True, ignore_db_cache=True,
                  tokenizer=None, pretrained_model_name=None,
                  add_image_as_a_box=False, mask_size=(14, 14),
-                 aspect_grouping=False, **kwargs):
+                 aspect_grouping=False, m2_transformer_info_list=None, **kwargs):
         """
         Visual Question Answering Dataset
 
@@ -102,6 +103,15 @@ class VQA(Dataset):
                 "test-dev2015": ("vgbua_res101_precomputed", "test2015_resnet101_faster_rcnn_genome"),
                 "test2015": ("vgbua_res101_precomputed", "test2015_resnet101_faster_rcnn_genome"),
             }
+        elif boxes == "10-100ada_v5.1.1_base":
+            precomputed_boxes = {
+                'train2014': ("vlb-res101_vqa_precomputed", "vqa-v5.1.1-base-10ep-precomp-trainval"),
+                "valminusminival2014": ("vlb-res101_vqa_precomputed", "vqa-v5.1.1-base-10ep-precomp-trainval"),
+                'val2014': ("vlb-res101_vqa_precomputed", "vqa-v5.1.1-base-10ep-precomp-trainval"),
+                "minival2014": ("vlb-res101_vqa_precomputed", "vqa-v5.1.1-base-10ep-precomp-trainval"),
+                "test-dev2015": ("vlb-res101_vqa_precomputed", "vqa-v5.1.1-base-10ep-precomp-test"),
+                "test2015": ("vlb-res101_vqa_precomputed", "vqa-v5.1.1-base-10ep-precomp-test"),
+            }
         else:
             raise ValueError("Not support boxes: {}!".format(boxes))
         coco_dataset = {
@@ -170,7 +180,7 @@ class VQA(Dataset):
         if zip_mode:
             self.zipreader = ZipReader()
 
-        self.database = self.load_annotations()
+        self.database = self.load_annotations(m2_transformer_info_list)
         if self.aspect_grouping:
             self.group_ids = self.group_aspect(self.database)
 
@@ -179,7 +189,8 @@ class VQA(Dataset):
         if self.test_mode:
             return ['image', 'boxes', 'im_info', 'question']
         else:
-            return ['image', 'boxes', 'im_info', 'question', 'label']
+            return ['image', 'boxes', 'im_info', 'question', 'label', 'tokenized_answer']
+            # return ['image', 'boxes', 'im_info', 'question', 'label']
 
     def __getitem__(self, index):
         idb = self.database[index]
@@ -252,11 +263,13 @@ class VQA(Dataset):
         if self.with_precomputed_visual_feat:
             boxes = torch.cat((boxes, boxes_features), dim=-1)
 
+        tokenized_answer = idb["tokenized_answer"]
         if self.test_mode:
             return image, boxes, im_info, q_ids
         else:
             # print([(self.answer_vocab[i], p.item()) for i, p in enumerate(label) if p.item() != 0])
-            return image, boxes, im_info, q_ids, label
+            # return image, boxes, im_info, q_ids, label
+            return image, boxes, im_info, q_ids, label, tokenized_answer
 
     @staticmethod
     def flip_tokens(tokens, verbose=True):
@@ -321,7 +334,41 @@ class VQA(Dataset):
                                        re.UNICODE)
         return outText
 
-    def load_annotations(self):
+    def highest_count_answer(self, m2_transformer_info_list, ann, all_answer=False):
+        """
+        Method for VQA answer generation task. Designed for being output with transformer decoder.
+        """
+        text_field = m2_transformer_info_list[0]
+        stoi = m2_transformer_info_list[0].vocab.stoi
+        index_answer = []
+        answer_dict_list = ann["answers"]
+        answer_list = []
+        for answer_dict in answer_dict_list:
+            answer = answer_dict['answer'] # consider 'answer_confidence' field: "yes", "maybe"
+            answer_list.append(answer)
+
+        count = Counter(answer_list)
+        answer = count.most_common(1)[0][0]
+        return answer
+
+        # if all_answer: # TODO: validate correctness
+        #     for answer in answer_list:
+        #         preprocessed_answer = text_field.preprocess(answer)
+        #         processed_answer = text_field.process(preprocessed_answer)
+        #         index_answer.append(processed_answer)
+        #     return index_answer
+        #
+        # if not all_answer:
+        #     count = Counter(answer_list)
+        #     answer = count.most_common(1)[0][0]
+        #     assert(isinstance(answer, str))
+        #     preprocessed_answer = text_field.preprocess(answer) # In M2Transformer, before calling preprocess, the variable is expected to be 1 string (of a sentence - the caption)
+        #     preprocessed_answer = (preprocessed_answer,)
+        #     assert(isinstance(preprocessed_answer[0], list))
+        #     processed_answer = text_field.process(preprocessed_answer) # In M2Transformer, before calling process, the variable is expected to be batched (a tuple of list, each list is a sentence)
+        #     return processed_answer
+
+    def load_annotations(self, m2_transformer_info_list):
         tic = time.time()
         database = []
         if self.use_imdb:
@@ -381,6 +428,8 @@ class VQA(Dataset):
                 anns = self._load_json(ann_file)['annotations'] if not self.test_mode else ([None] * len(qs))
                 coco = COCO(coco_annot)
                 for ann, q in zip(anns, qs):
+                    highest_string_answer = self.highest_count_answer(m2_transformer_info_list, ann)
+                    # print("tokenized_string_index: {}".format(tokenized_string_index))
                     idb = {'image_id': q['image_id'],
                            'image_fn': coco_path.format(q['image_id']),
                            'width': coco.imgs[q['image_id']]['width'],
@@ -392,6 +441,7 @@ class VQA(Dataset):
                            'multiple_choice_answer': ann['multiple_choice_answer'] if not self.test_mode else None,
                            "question_type": ann['question_type'] if not self.test_mode else None,
                            "answer_type": ann['answer_type'] if not self.test_mode else None,
+                           "tokenized_answer": highest_string_answer,
                            }
                     database.append(idb)
 

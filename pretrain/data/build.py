@@ -8,7 +8,7 @@ import pprint
 from copy import deepcopy
 
 DATASET_CATALOGS = {'conceptual_captions': ConceptualCaptionsDataset,
-                    'coco_captions': COCOCaptionsDataset,
+                    'vcr_corpus': VCRCorpus,
                     'general_corpus': GeneralCorpus}
 
 

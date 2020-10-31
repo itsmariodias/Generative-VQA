@@ -1,5 +1,5 @@
 import torch
-
+from collections import Counter
 
 def clip_pad_images(tensor, pad_shape, pad=0):
     """
@@ -55,3 +55,18 @@ def clip_pad_2d(tensor, pad_shape, pad=0):
         = tensor[:min(tensor.shape[0], pad_shape[0]), :min(tensor.shape[1], pad_shape[1])]
 
     return tensor_ret
+
+
+def tokenize_and_pad_answer(batched_answer, m2_transformer_info_list):
+    """
+    Method for VQA answer generation task. Designed for being output with transformer decoder.
+    """
+    text_field = m2_transformer_info_list[0]
+    batched_pre_answer = []
+    for answer in batched_answer:
+        preprocessed_answer = text_field.preprocess(answer) # In M2Transformer, before calling preprocess, the variable is expected to be 1 string (of a sentence - the caption)
+        batched_pre_answer.append(preprocessed_answer)
+    # preprocessed_answer = (preprocessed_answer,)
+    assert(isinstance(batched_pre_answer[0], list))
+    batched_processed_answer = text_field.process(batched_pre_answer) # In M2Transformer, before calling process, the variable is expected to be batched (a tuple of list, each list is a sentence)
+    return batched_processed_answer

@@ -3,8 +3,9 @@ from common.utils.clip_pad import *
 
 
 class BatchCollator(object):
-    def __init__(self, dataset, append_ind=False):
+    def __init__(self, dataset, m2_transformer_info_list, append_ind=False):
         self.dataset = dataset
+        self.m2_transformer_info_list = m2_transformer_info_list
         self.test_mode = self.dataset.test_mode
         self.data_names = self.dataset.data_names
         self.append_ind = append_ind
@@ -20,6 +21,16 @@ class BatchCollator(object):
             image_none = True
         max_boxes = max([data[self.data_names.index('boxes')].shape[0] for data in batch])
         max_question_length = max([len(data[self.data_names.index('question')]) for data in batch])
+
+        # tokenize the vqa answer
+        answer_list = []
+        for i, ibatch in enumerate(batch):
+            answer_list.append(ibatch[self.data_names.index('tokenized_answer')])
+        padded_answer = tokenize_and_pad_answer(answer_list, self.m2_transformer_info_list)
+        for i, ibatch in enumerate(batch):
+            batch[i] = list(batch[i])
+            batch[i][self.data_names.index('tokenized_answer')] = padded_answer[i]
+            batch[i] = tuple(batch[i])
 
         for i, ibatch in enumerate(batch):
             out = {}

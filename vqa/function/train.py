@@ -26,6 +26,9 @@ from vqa.data.build import make_dataloader, build_dataset, build_transforms
 from vqa.modules import *
 from vqa.function.val import do_validation
 
+import pickle
+from data import ImageDetectionsField, TextField, RawField, COCOM2Tranformer
+
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as Apex_DDP
@@ -57,6 +60,28 @@ def train_net(args, config):
     torch.backends.cudnn.benchmark = False
     if args.cudnn_off:
         torch.backends.cudnn.enabled = False
+
+    m2_transformer_info_list = []
+    ############## Start of Preparation for text_field ##############
+    # Gavin: copied from M2Transformer, vocab is used for preparing output for VLBERT vqa generation
+    # Pipeline for image regions
+    image_field = ImageDetectionsField(detections_path="../M2TransformerData/coco_detections.hdf5", max_detections=50,
+                                       load_in_tmp=False)
+    # Pipeline for text
+    text_field = TextField(init_token='<bos>', eos_token='<eos>', lower=True, tokenize='spacy',
+                           remove_punctuation=True, nopoints=False, fix_length=10)
+    # The image section is not needed, but it requires less modification of the code
+    dataset = COCOM2Tranformer(image_field, text_field, 'coco/images/', "../M2TransformerData/annotations",
+                               "../M2TransformerData/annotations")
+    train_dataset, val_dataset, test_dataset = dataset.splits
+    if not os.path.isfile('vocab.pkl'):
+        print("Building vocabulary")
+        text_field.build_vocab(train_dataset, val_dataset, min_freq=5)
+        pickle.dump(text_field.vocab, open('vocab.pkl', 'wb'))
+    else:
+        text_field.vocab = pickle.load(open('vocab.pkl', 'rb'))
+    ############### End of Preparation for text_field ###############
+    m2_transformer_info_list.append(text_field)
 
     if args.dist:
         model = eval(config.MODULE)(config)
@@ -160,8 +185,8 @@ def train_net(args, config):
             model.cuda()
 
         # loader
-        train_loader = make_dataloader(config, mode='train', distributed=False)
-        val_loader = make_dataloader(config, mode='val', distributed=False)
+        train_loader = make_dataloader(config, mode='train', distributed=False, m2_transformer_info_list=m2_transformer_info_list)
+        val_loader = make_dataloader(config, mode='val', distributed=False, m2_transformer_info_list=m2_transformer_info_list)
         train_sampler = None
 
         batch_size = num_gpus * (sum(config.TRAIN.BATCH_IMAGES) if isinstance(config.TRAIN.BATCH_IMAGES, list)
@@ -228,13 +253,13 @@ def train_net(args, config):
             answers_word_embed.append(a_word_embed)
         answers_word_embed_tensor = torch.stack(answers_word_embed, dim=0)
         for name, module in model.named_modules():
-            if name.endswith('final_mlp'):
+            if name.endswith('final_mlp'):  # this will not get executed given the decoder
                 module[-1].weight.data = answers_word_embed_tensor.to(device=module[-1].weight.data.device)
 
     # metrics
-    train_metrics_list = [vqa_metrics.SoftAccuracy(allreduce=args.dist,
+    train_metrics_list = [vqa_metrics.DecoderAccuracy(allreduce=args.dist,
                                                    num_replicas=world_size if args.dist else 1)]
-    val_metrics_list = [vqa_metrics.SoftAccuracy(allreduce=args.dist,
+    val_metrics_list = [vqa_metrics.DecoderAccuracy(allreduce=args.dist,
                                                  num_replicas=world_size if args.dist else 1)]
     for output_name, display_name in config.TRAIN.LOSS_LOGGERS:
         train_metrics_list.append(

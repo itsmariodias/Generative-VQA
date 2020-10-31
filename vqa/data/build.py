@@ -38,7 +38,7 @@ def make_batch_data_sampler(dataset, sampler, aspect_grouping, batch_size):
 
 
 def make_dataloader(cfg, dataset=None, mode='train', distributed=False, num_replicas=None, rank=None,
-                    expose_sampler=False):
+                    expose_sampler=False, m2_transformer_info_list=None):
     assert mode in ['train', 'val', 'test']
     if mode == 'train':
         ann_file = cfg.DATASET.TRAIN_ANNOTATION_FILE
@@ -82,12 +82,14 @@ def make_dataloader(cfg, dataset=None, mode='train', distributed=False, num_repl
                                 add_image_as_a_box=cfg.DATASET.ADD_IMAGE_AS_A_BOX,
                                 aspect_grouping=aspect_grouping,
                                 mask_size=(cfg.DATASET.MASK_SIZE, cfg.DATASET.MASK_SIZE),
-                                pretrained_model_name=cfg.NETWORK.BERT_MODEL_NAME)
+                                pretrained_model_name=cfg.NETWORK.BERT_MODEL_NAME,
+                                m2_transformer_info_list=m2_transformer_info_list)
 
     sampler = make_data_sampler(dataset, shuffle, distributed, num_replicas, rank)
     batch_sampler = make_batch_data_sampler(dataset, sampler, aspect_grouping, batch_size)
-    collator = BatchCollator(dataset=dataset, append_ind=cfg.DATASET.APPEND_INDEX)
+    collator = BatchCollator(dataset=dataset, m2_transformer_info_list=m2_transformer_info_list, append_ind=cfg.DATASET.APPEND_INDEX)
 
+    # dataset.database = dataset.database[0:200]
     dataloader = torch.utils.data.DataLoader(dataset=dataset,
                                              batch_sampler=batch_sampler,
                                              num_workers=num_workers,

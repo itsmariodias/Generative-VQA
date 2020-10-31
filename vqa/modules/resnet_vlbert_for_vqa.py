@@ -8,6 +8,9 @@ from common.module import Module
 from common.fast_rcnn import FastRCNN
 from common.visual_linguistic_bert import VisualLinguisticBert
 
+from models.transformer.decoders import MeshedDecoder
+import pickle
+
 BERT_WEIGHTS_NAME = 'pytorch_model.bin'
 
 
@@ -47,12 +50,22 @@ class ResNetVLBERT(Module):
             print("Warning: no pretrained language model found, training from scratch!!!")
 
         self.vlbert = VisualLinguisticBert(config.NETWORK.VLBERT,
-                                         language_pretrained_model_path=language_pretrained_model_path)
+                                           language_pretrained_model_path=language_pretrained_model_path)
 
         # self.hm_out = nn.Linear(config.NETWORK.VLBERT.hidden_size, config.NETWORK.VLBERT.hidden_size)
         # self.hi_out = nn.Linear(config.NETWORK.VLBERT.hidden_size, config.NETWORK.VLBERT.hidden_size)
 
         dim = config.NETWORK.VLBERT.hidden_size
+        self.transformer_decoder = False
+        self.decoder_num_layer = 3
+        # if self.transformer_decoder: # force transformer decoder for now
+        if True: # force transformer decoder for now
+            # code adapted from meshed memory tranformer
+            from data import TextField
+            self.text_field = TextField(init_token='<bos>', eos_token='<eos>', lower=True, tokenize='spacy',
+                                        remove_punctuation=True, nopoints=False)
+            self.text_field.vocab = pickle.load(open('./vocab.pkl', 'rb'))
+            self.decoder = MeshedDecoder(len(self.text_field.vocab), max_len=10, N_dec=self.decoder_num_layer, padding_idx=self.text_field.vocab.stoi['<pad>'], d_model=768, d_k=64, d_v=64, h=12, d_ff=3072)
         if config.NETWORK.CLASSIFIER_TYPE == "2fc":
             self.final_mlp = torch.nn.Sequential(
                 torch.nn.Dropout(config.NETWORK.CLASSIFIER_DROPOUT, inplace=False),
@@ -90,25 +103,26 @@ class ResNetVLBERT(Module):
         self.image_feature_extractor.init_weight()
         if self.object_linguistic_embeddings is not None:
             self.object_linguistic_embeddings.weight.data.normal_(mean=0.0, std=0.02)
-        for m in self.final_mlp.modules():
-            if isinstance(m, torch.nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                torch.nn.init.constant_(m.bias, 0)
-        if self.config.NETWORK.CLASSIFIER_TYPE == 'mlm':
-            language_pretrained = torch.load(self.language_pretrained_model_path)
-            mlm_transform_state_dict = {}
-            pretrain_keys = []
-            for k, v in language_pretrained.items():
-                if k.startswith('cls.predictions.transform.'):
-                    pretrain_keys.append(k)
-                    k_ = k[len('cls.predictions.transform.'):]
-                    if 'gamma' in k_:
-                        k_ = k_.replace('gamma', 'weight')
-                    if 'beta' in k_:
-                        k_ = k_.replace('beta', 'bias')
-                    mlm_transform_state_dict[k_] = v
-            print("loading pretrained classifier transform keys: {}.".format(pretrain_keys))
-            self.final_mlp[0].load_state_dict(mlm_transform_state_dict)
+        if not self.transformer_decoder:
+            for m in self.final_mlp.modules():
+                if isinstance(m, torch.nn.Linear):
+                    torch.nn.init.xavier_uniform_(m.weight)
+                    torch.nn.init.constant_(m.bias, 0)
+            if self.config.NETWORK.CLASSIFIER_TYPE == 'mlm':
+                language_pretrained = torch.load(self.language_pretrained_model_path)
+                mlm_transform_state_dict = {}
+                pretrain_keys = []
+                for k, v in language_pretrained.items():
+                    if k.startswith('cls.predictions.transform.'):
+                        pretrain_keys.append(k)
+                        k_ = k[len('cls.predictions.transform.'):]
+                        if 'gamma' in k_:
+                            k_ = k_.replace('gamma', 'weight')
+                        if 'beta' in k_:
+                            k_ = k_.replace('beta', 'bias')
+                        mlm_transform_state_dict[k_] = v
+                print("loading pretrained classifier transform keys: {}.".format(pretrain_keys))
+                self.final_mlp[0].load_state_dict(mlm_transform_state_dict)
 
     def train(self, mode=True):
         super(ResNetVLBERT, self).train(mode)
@@ -172,8 +186,12 @@ class ResNetVLBERT(Module):
                       im_info,
                       question,
                       label,
+                      tokenized_answer,
                       ):
         ###########################################
+
+        # print("in train_forward, tokenized_answer is: {}".format(tokenized_answer))
+        print("train target: {}".format(self.text_field.decode(tokenized_answer)))
 
         # visual feature extraction
         images = image
@@ -225,42 +243,68 @@ class ResNetVLBERT(Module):
         # Visual Linguistic BERT
 
         hidden_states, hc = self.vlbert(text_input_ids,
-                                      text_token_type_ids,
-                                      text_visual_embeddings,
-                                      text_mask,
-                                      object_vl_embeddings,
-                                      box_mask,
-                                      output_all_encoded_layers=False)
+                                        text_token_type_ids,
+                                        text_visual_embeddings,
+                                        text_mask,
+                                        object_vl_embeddings,
+                                        box_mask,
+                                        output_all_encoded_layers=True)
         _batch_inds = torch.arange(question.shape[0], device=question.device)
 
-        hm = hidden_states[_batch_inds, ans_pos]
+        if isinstance(hidden_states, list):
+            hm = hidden_states[-1][_batch_inds, ans_pos]
+        else:
+            hm = hidden_states[_batch_inds, ans_pos]
         # hm = F.tanh(self.hm_out(hidden_states[_batch_inds, ans_pos]))
         # hi = F.tanh(self.hi_out(hidden_states[_batch_inds, ans_pos + 2]))
 
         ###########################################
         outputs = {}
 
-        # classifier
-        # logits = self.final_mlp(hc * hm * hi)
-        # logits = self.final_mlp(hc)
+        # mlp classifier
         logits = self.final_mlp(hm)
-
-        # loss
+        # mlp classifier loss
         ans_loss = F.binary_cross_entropy_with_logits(logits, label) * label.size(1)
 
-        outputs.update({'label_logits': logits,
-                        'label': label,
-                        'ans_loss': ans_loss})
+        # mlp classifier outputs
+        # outputs.update({'label_logits': logits,
+        #                 'label': label,
+        #                 'ans_loss': ans_loss})
+
+        # transformer decoder output
+        encoder_output = torch.transpose(torch.stack(hidden_states), 0, 1)
+        encoder_output = encoder_output[:, 0:self.decoder_num_layer, :, :]
+
+        # do not mask any information from the encoder, use all the encoder embeddings
+        mask_shape = (encoder_output.shape[0], 1, 1, encoder_output.shape[2])
+        mask_enc = torch.zeros(mask_shape, dtype=torch.bool).cuda() # TODO: there is a more proper place to declare this value
+        # print("training tokenized_answer: {}, encoder_output: {}, mask_end: {}".format(tokenized_answer.shape, encoder_output.shape, mask_enc.shape))
+        decoder_output = self.decoder(tokenized_answer, encoder_output, mask_enc)
+
+        decoder_loss_fn = nn.NLLLoss(ignore_index=self.text_field.vocab.stoi['<bos>'])
+        tokenized_answer = tokenized_answer[:, 1:].contiguous()
+        decoder_output = decoder_output[:, :-1].contiguous()
+        decoder_loss_value = decoder_loss_fn(decoder_output.view(-1, len(self.text_field.vocab)), tokenized_answer.view(-1))
+
+        # mlp classifier outputs
+        outputs.update({'decoder_output': decoder_output,
+                        'tokenized_answer': tokenized_answer,
+                        'ans_loss': decoder_loss_value})
 
         loss = ans_loss.mean()
-
-        return outputs, loss
+        print("decoder_loss_value: {} ;train output: {}".format(decoder_loss_value, self.text_field.decode(torch.argmax(decoder_output, 2))))
+        # print("resnet_vlbert_for_vqa.py, decoder_loss_value: {}".format(decoder_loss_value))
+        # return outputs, loss
+        return outputs, decoder_loss_value
 
     def inference_forward(self,
                           image,
                           boxes,
                           im_info,
-                          question):
+                          question,
+                          label,
+                          tokenized_answer,
+                          ):
 
         ###########################################
 
@@ -314,26 +358,53 @@ class ResNetVLBERT(Module):
         # Visual Linguistic BERT
 
         hidden_states, hc = self.vlbert(text_input_ids,
-                                      text_token_type_ids,
-                                      text_visual_embeddings,
-                                      text_mask,
-                                      object_vl_embeddings,
-                                      box_mask,
-                                      output_all_encoded_layers=False)
+                                        text_token_type_ids,
+                                        text_visual_embeddings,
+                                        text_mask,
+                                        object_vl_embeddings,
+                                        box_mask,
+                                        output_all_encoded_layers=True)
         _batch_inds = torch.arange(question.shape[0], device=question.device)
 
-        hm = hidden_states[_batch_inds, ans_pos]
+        if isinstance(hidden_states, list):
+            hm = hidden_states[-1][_batch_inds, ans_pos]
+        else:
+            hm = hidden_states[_batch_inds, ans_pos]
         # hm = F.tanh(self.hm_out(hidden_states[_batch_inds, ans_pos]))
         # hi = F.tanh(self.hi_out(hidden_states[_batch_inds, ans_pos + 2]))
 
         ###########################################
         outputs = {}
 
-        # classifier
-        # logits = self.final_mlp(hc * hm * hi)
-        # logits = self.final_mlp(hc)
+        # mlp classifier
         logits = self.final_mlp(hm)
+        # mlp output
+        # outputs.update({'label_logits': logits})
 
-        outputs.update({'label_logits': logits})
+        # transformer decoder output
+        encoder_output = torch.transpose(torch.stack(hidden_states), 0, 1)
+        encoder_output = encoder_output[:, 0:self.decoder_num_layer, :, :]
 
+        # do not mask any information from the encoder, use all the encoder embeddings
+        mask_shape = (encoder_output.shape[0], 1, 1, encoder_output.shape[2])
+        mask_enc = torch.zeros(mask_shape, dtype=torch.bool).cuda() # TODO: there is a more proper place to declare this value
+        # print("testing tokenized_answer: {}, encoder_output: {}, mask_end: {}".format(tokenized_answer.shape, encoder_output.shape, mask_enc.shape))
+
+        # in inference, the decoder output cannot be provided and has to be generated iteratively
+        bos_idx = self.text_field.vocab.stoi["<pad>"] # fill the input with pad tag
+        temporary_answer = tokenized_answer.clone()
+        temporary_answer.fill_(bos_idx)
+        for iter in range(0, tokenized_answer.shape[1]):
+            # print("resnet_vlbert_for_vqa inference iteration: {}".format(iter))
+            decoder_output = self.decoder(temporary_answer, encoder_output, mask_enc)
+            temporary_answer = torch.argmax(decoder_output, 2)
+
+        # decoder_output = self.decoder(tokenized_answer, encoder_output, mask_enc)
+        # decoder_loss_fn = nn.NLLLoss(ignore_index=self.text_field.vocab.stoi['<bos>'])
+        # decoder_loss_value = decoder_loss_fn(decoder_output.view(-1, len(self.text_field.vocab)), tokenized_answer.view(-1))
+
+        # mlp classifier outputs
+        outputs.update({'decoder_output': decoder_output})
+        # print("testing target: {}".format(self.text_field.decode(tokenized_answer)))
+        # print("testing output: {}".format(self.text_field.decode(torch.argmax(decoder_output, 2))))
         return outputs

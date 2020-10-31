@@ -1,5 +1,5 @@
 from .conceptual_captions import ConceptualCaptionsDataset
-from .coco_captions import COCOCaptionsDataset
+from .vcr_corpus import VCRCorpus
 from .general_corpus import GeneralCorpus
 
 

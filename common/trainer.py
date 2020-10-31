@@ -97,8 +97,15 @@ def train(net,
             val = value[name.index(validation_monitor.host_metric_name)]
             lr_scheduler.step(val, epoch)
 
+        # Go through the dataset, identify malformed data
+        # print("Start ===========================================================")
+        # for nbatch, batch in enumerate(train_loader):
+        #     print("{}".format(nbatch), end=" ")
+        # print("End ===========================================================")
+
         # training
         for nbatch, batch in enumerate(train_loader):
+            # try:
             global_steps = len(train_loader) * epoch + nbatch
             os.environ['global_steps'] = str(global_steps)
 
@@ -187,6 +194,9 @@ def train(net,
 
             # update end time
             end_time = time.time()
+            # except RuntimeError as e:
+            #     print("There is runtime error: {}".format(e))
+            #     continue
 
         # excute epoch_end_callbacks
         if validation_monitor is not None:
