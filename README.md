@@ -50,15 +50,12 @@ See [PREPARE_PRETRAINED_MODELS.md](model/pretrained_model/PREPARE_PRETRAINED_MOD
 
 To train the model, run:
 ```
-cd vqa
-./train_end2end.py --cfg ./cfgs/vqa/base_4x16G_fp32.yaml --model-dir ./ckpts_decoder_with_proper_acc2
+python vqa/train_end2end.py --cfg ./cfgs/vqa/base_4x16G_fp32.yaml --model-dir ./ckpts_decoder_with_proper_acc2
 ```
 
 To generate the result shown in the paper, run:
 ```
-cd vqa
-./test.py --cfg ./cfgs/vqa/base_4x16G_fp32.yaml --ckpt ./ckpts/output/vl-bert/vqa/base_4x16G_fp32/train2014_train/vl-bert_base_res101_vqa-best.model --bs 1 --gpus 0 --model-dir ./model/pretrained_model --result-path ./result --result-name result.txt
-Following is a more concrete example:
+python vqa/test.py --cfg ./cfgs/vqa/base_4x16G_fp32.yaml --ckpt ./ckpts_decoder_with_proper_acc2/output/vl-bert/vqa/base_4x16G_fp32/train2014_train/vl-bert_base_res101_vqa-best.model --bs 1 --gpus 0 --model-dir ./model/pretrained_model --result-path ./result --result-name result.txt
 ```
 
 ## Acknowledgements
