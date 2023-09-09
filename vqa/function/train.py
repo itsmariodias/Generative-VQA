@@ -71,8 +71,8 @@ def train_net(args, config):
     text_field = TextField(init_token='<bos>', eos_token='<eos>', lower=True, tokenize='spacy',
                            remove_punctuation=True, nopoints=False, fix_length=10)
     # The image section is not needed, but it requires less modification of the code
-    dataset = COCOM2Tranformer(image_field, text_field, 'coco/images/', "../M2TransformerData/annotations",
-                               "../M2TransformerData/annotations")
+    dataset = COCOM2Tranformer(image_field, text_field, 'coco/images/', "../M2TransformerData/data/annotations",
+                               "../M2TransformerData/data/annotations")
     train_dataset, val_dataset, test_dataset = dataset.splits
     if not os.path.isfile('vocab.pkl'):
         print("Building vocabulary")

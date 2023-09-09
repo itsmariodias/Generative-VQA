@@ -32,8 +32,8 @@ class EvalMetric(object):
 
     def reset(self):
         """Resets the internal evaluation result to initial state."""
-        self.num_inst = torch.tensor(0.)
-        self.sum_metric = torch.tensor(0.)
+        self.num_inst = torch.tensor(0.).cuda()
+        self.sum_metric = torch.tensor(0.).cuda()
 
     def get(self):
         """Returns the current evaluation result.

@@ -160,7 +160,7 @@ class ResNetVLBERT(Module):
         q_end = 1 + question_mask.sum(1, keepdim=True)
         a_end = q_end + 1 + answer_mask.sum(1, keepdim=True)
         input_ids = torch.zeros((batch_size, max_len), dtype=question.dtype, device=question.device)
-        input_mask = torch.ones((batch_size, max_len), dtype=torch.uint8, device=question.device)
+        input_mask = torch.ones((batch_size, max_len), dtype=torch.bool, device=question.device)
         input_type_ids = torch.zeros((batch_size, max_len), dtype=question.dtype, device=question.device)
         text_tags = input_type_ids.new_zeros((batch_size, max_len))
         grid_i, grid_j = torch.meshgrid(torch.arange(batch_size, device=question.device),
@@ -191,7 +191,7 @@ class ResNetVLBERT(Module):
         ###########################################
 
         # print("in train_forward, tokenized_answer is: {}".format(tokenized_answer))
-        print("train target: {}".format(self.text_field.decode(tokenized_answer)))
+        # print("train target: {}".format(self.text_field.decode(tokenized_answer)))
 
         # visual feature extraction
         images = image
@@ -292,7 +292,7 @@ class ResNetVLBERT(Module):
                         'ans_loss': decoder_loss_value})
 
         loss = ans_loss.mean()
-        print("decoder_loss_value: {} ;train output: {}".format(decoder_loss_value, self.text_field.decode(torch.argmax(decoder_output, 2))))
+        # print("decoder_loss_value: {} ;train output: {}".format(decoder_loss_value, self.text_field.decode(torch.argmax(decoder_output, 2))))
         # print("resnet_vlbert_for_vqa.py, decoder_loss_value: {}".format(decoder_loss_value))
         # return outputs, loss
         return outputs, decoder_loss_value

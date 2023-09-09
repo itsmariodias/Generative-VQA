@@ -20,7 +20,7 @@ from common.utils.create_logger import makedirsExist
 
 from pycocotools.coco import COCO
 
-csv.field_size_limit(sys.maxsize)
+csv.field_size_limit(2147483647)
 FIELDNAMES = ['image_id', 'image_w', 'image_h', 'num_boxes', 'boxes', 'features']
 
 from collections import Counter
@@ -187,12 +187,13 @@ class VQA(Dataset):
     @property
     def data_names(self):
         if self.test_mode:
-            return ['image', 'boxes', 'im_info', 'question']
+            return ['image', 'boxes', 'im_info', 'question', 'tokenized_answer']
         else:
             return ['image', 'boxes', 'im_info', 'question', 'label', 'tokenized_answer']
             # return ['image', 'boxes', 'im_info', 'question', 'label']
 
     def __getitem__(self, index):
+        label = None
         idb = self.database[index]
 
         # image, boxes, im_info
@@ -265,7 +266,7 @@ class VQA(Dataset):
 
         tokenized_answer = idb["tokenized_answer"]
         if self.test_mode:
-            return image, boxes, im_info, q_ids
+            return image, boxes, im_info, q_ids, tokenized_answer
         else:
             # print([(self.answer_vocab[i], p.item()) for i, p in enumerate(label) if p.item() != 0])
             # return image, boxes, im_info, q_ids, label
@@ -338,9 +339,9 @@ class VQA(Dataset):
         """
         Method for VQA answer generation task. Designed for being output with transformer decoder.
         """
-        text_field = m2_transformer_info_list[0]
-        stoi = m2_transformer_info_list[0].vocab.stoi
-        index_answer = []
+        # text_field = m2_transformer_info_list[0]
+        # stoi = m2_transformer_info_list[0].vocab.stoi
+        # index_answer = []
         answer_dict_list = ann["answers"]
         answer_list = []
         for answer_dict in answer_dict_list:
@@ -428,7 +429,7 @@ class VQA(Dataset):
                 anns = self._load_json(ann_file)['annotations'] if not self.test_mode else ([None] * len(qs))
                 coco = COCO(coco_annot)
                 for ann, q in zip(anns, qs):
-                    highest_string_answer = self.highest_count_answer(m2_transformer_info_list, ann)
+                    highest_string_answer = self.highest_count_answer(m2_transformer_info_list, ann) if not self.test_mode else ""
                     # print("tokenized_string_index: {}".format(tokenized_string_index))
                     idb = {'image_id': q['image_id'],
                            'image_fn': coco_path.format(q['image_id']),
@@ -512,6 +513,6 @@ class VQA(Dataset):
             f = self.zipreader.read(path)
             return json.loads(f.decode())
         else:
-            with open(path, 'r') as f:
+            with open(path.replace('\\', os.sep), 'r') as f:
                 return json.load(f)
 

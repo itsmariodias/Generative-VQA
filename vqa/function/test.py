@@ -1,4 +1,5 @@
 import os
+import pickle
 import pprint
 import shutil
 
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 from common.utils.load import smart_load_model_state_dict
 from common.trainer import to_cuda
 from common.utils.create_logger import create_logger
+from data import ImageDetectionsField, TextField, COCOM2Tranformer
 from vqa.data.build import make_dataloader
 from vqa.modules import *
 
@@ -26,6 +28,28 @@ def test_net(args, config, ckpt_path=None, save_path=None, save_name=None):
     torch.backends.cudnn.enabled = False
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+    m2_transformer_info_list = []
+    ############## Start of Preparation for text_field ##############
+    # Gavin: copied from M2Transformer, vocab is used for preparing output for VLBERT vqa generation
+    # Pipeline for image regions
+    image_field = ImageDetectionsField(detections_path="../M2TransformerData/coco_detections.hdf5", max_detections=50,
+                                       load_in_tmp=False)
+    # Pipeline for text
+    text_field = TextField(init_token='<bos>', eos_token='<eos>', lower=True, tokenize='spacy',
+                           remove_punctuation=True, nopoints=False, fix_length=10)
+    # The image section is not needed, but it requires less modification of the code
+    dataset = COCOM2Tranformer(image_field, text_field, 'coco/images/', "../M2TransformerData/data/annotations",
+                               "../M2TransformerData/data/annotations")
+    train_dataset, val_dataset, test_dataset = dataset.splits
+    if not os.path.isfile('vocab.pkl'):
+        print("Building vocabulary")
+        text_field.build_vocab(train_dataset, val_dataset, min_freq=5)
+        pickle.dump(text_field.vocab, open('vocab.pkl', 'wb'))
+    else:
+        text_field.vocab = pickle.load(open('vocab.pkl', 'rb'))
+    ############### End of Preparation for text_field ###############
+    m2_transformer_info_list.append(text_field)
 
     if ckpt_path is None:
         _, train_output_path = create_logger(config.OUTPUT_PATH, args.cfg, config.DATASET.TRAIN_IMAGE_SET,
@@ -53,7 +77,7 @@ def test_net(args, config, ckpt_path=None, save_path=None, save_name=None):
     smart_load_model_state_dict(model, checkpoint['state_dict'])
 
     # loader
-    test_loader = make_dataloader(config, mode='test', distributed=False)
+    test_loader = make_dataloader(config, mode='test', distributed=False, m2_transformer_info_list=m2_transformer_info_list)
     test_dataset = test_loader.dataset
     test_database = test_dataset.database
 
@@ -68,7 +92,7 @@ def test_net(args, config, ckpt_path=None, save_path=None, save_name=None):
         q_ids.extend([test_database[id]['question_id'] for id in range(cur_id, min(cur_id + bs, len(test_database)))])
         batch = to_cuda(batch)
         output = model(*batch)
-        answer_ids.extend(output['label_logits'].argmax(dim=1).detach().cpu().tolist())
+        answer_ids.extend(output['decoder_output'].argmax(dim=1).detach().cpu().tolist())
         cur_id += bs
 
     result = [{'question_id': q_id, 'answer': test_dataset.answer_vocab[a_id]} for q_id, a_id in zip(q_ids, answer_ids)]
